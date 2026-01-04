@@ -8,6 +8,7 @@ import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 contract SmartAccount {
     using ECDSA for bytes32;
 
+    
     address public immutable OWNER;
     IEntryPoint public immutable ENTRY_POINT;
     uint256 public nonce;
@@ -33,6 +34,44 @@ contract SmartAccount {
 
     receive() external payable {}
 
+    struct SessionKey {
+        address target;
+        bytes4 selector;
+        uint48 expiry;
+        uint48 maxUses;
+        uint48 used;
+    }
+
+    mapping(address => SessionKey) public sessionKeys;
+
+    function addSessionKey(
+        address key,
+        address target,
+        bytes4 selector,
+        uint48 expiry,
+        uint48 maxUses
+    ) external {
+        require(msg.sender == OWNER, "only owner");
+        require(key != address(0), "invalid key");
+        require(target != address(0), "invalid target");
+        require(expiry > block.timestamp, "invalid expiry");
+        require(maxUses > 0, "invalid maxUses");
+
+        sessionKeys[key] = SessionKey({
+            target: target,
+            selector: selector,
+            expiry: expiry,
+            maxUses: maxUses,
+            used: 0
+        });
+    }
+
+    function revokeSessionKey(address key) external {
+        require(msg.sender == OWNER, "only owner");
+        delete sessionKeys[key];
+    }
+
+    
     function validateUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash,
@@ -44,7 +83,22 @@ contract SmartAccount {
             .toEthSignedMessageHash()
             .recover(userOp.signature);
 
-        require(signer == OWNER, "invalid signature");
+        if (signer != OWNER) {
+            SessionKey storage sk = sessionKeys[signer];
+
+            require(sk.expiry != 0, "invalid session key");
+            require(block.timestamp <= sk.expiry, "session expired");
+            require(sk.used < sk.maxUses, "session limit exceeded");
+
+            bytes4 selector = bytes4(userOp.callData[0:4]);
+            require(selector == sk.selector, "invalid selector");
+
+            address target = abi.decode(userOp.callData[4:], (address));
+
+            require(target == sk.target, "invalid target");
+
+            sk.used++;
+        }
 
         unchecked {
             nonce++;
@@ -57,6 +111,7 @@ contract SmartAccount {
         return 0;
     }
 
+
     function execute(
         address to,
         uint256 value,
@@ -66,6 +121,8 @@ contract SmartAccount {
         require(success, "execution failed");
     }
 
+   
+
     function isValidSignature(
         bytes32 hash,
         bytes calldata signature
@@ -74,6 +131,19 @@ contract SmartAccount {
             .toEthSignedMessageHash()
             .recover(signature);
 
-        return signer == OWNER ? EIP1271_MAGICVALUE : bytes4(0);
+        if (signer == OWNER) {
+            return EIP1271_MAGICVALUE;
+        }
+
+        SessionKey memory sk = sessionKeys[signer];
+        if (
+            sk.expiry != 0 &&
+            block.timestamp <= sk.expiry &&
+            sk.used < sk.maxUses
+        ) {
+            return EIP1271_MAGICVALUE;
+        }
+
+        return bytes4(0);
     }
 }
