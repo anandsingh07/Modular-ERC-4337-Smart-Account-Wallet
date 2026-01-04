@@ -2,7 +2,7 @@
 pragma solidity ^0.8.23;
 
 import { IEntryPoint } from "account-abstraction/interfaces/IEntryPoint.sol";
-import { SmartAccount } from "../SmartAccount.sol";
+import { SmartAccount } from './SmartAccount.sol';
 
 contract SmartAccountFactory {
     IEntryPoint public immutable ENTRY_POINT;
