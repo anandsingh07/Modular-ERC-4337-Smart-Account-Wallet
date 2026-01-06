@@ -2,7 +2,7 @@
 pragma solidity ^0.8.23;
 
 import { IEntryPoint } from "account-abstraction/interfaces/IEntryPoint.sol";
-import { SmartAccount } from './SmartAccount.sol';
+import { SmartAccount } from "./SmartAccount.sol";
 
 contract SmartAccountFactory {
     IEntryPoint public immutable ENTRY_POINT;
@@ -10,7 +10,7 @@ contract SmartAccountFactory {
     event AccountCreated(
         address indexed account,
         address indexed owner,
-        bytes32 salt
+        bytes32 indexed salt
     );
 
     constructor(IEntryPoint entryPoint_) {
@@ -22,9 +22,20 @@ contract SmartAccountFactory {
         address owner,
         bytes32 salt
     ) external returns (address account) {
-        bytes32 finalSalt = keccak256(abi.encode(owner, salt));
+        require(owner != address(0), "invalid owner");
+
+        
+        require(
+            msg.sender == owner || msg.sender == address(ENTRY_POINT),
+            "unauthorized deployer"
+        );
+
+        bytes32 finalSalt = keccak256(
+            abi.encode(owner, salt, block.chainid)
+        );
 
         account = getAddress(owner, salt);
+
         if (account.code.length > 0) {
             return account;
         }
@@ -33,14 +44,16 @@ contract SmartAccountFactory {
             new SmartAccount{salt: finalSalt}(owner, ENTRY_POINT)
         );
 
-        emit AccountCreated(account, owner, salt);
+        emit AccountCreated(account, owner, finalSalt);
     }
 
     function getAddress(
         address owner,
         bytes32 salt
     ) public view returns (address) {
-        bytes32 finalSalt = keccak256(abi.encode(owner, salt));
+        bytes32 finalSalt = keccak256(
+            abi.encode(owner, salt, block.chainid)
+        );
 
         bytes memory creationCode = abi.encodePacked(
             type(SmartAccount).creationCode,
