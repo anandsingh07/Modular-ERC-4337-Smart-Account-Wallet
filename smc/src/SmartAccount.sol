@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.23;
 
 import { IEntryPoint } from "account-abstraction/interfaces/IEntryPoint.sol";
@@ -17,11 +18,11 @@ contract SmartAccount {
 
     address public immutable OWNER;
     IEntryPoint public immutable ENTRY_POINT;
+    uint256 public nonce;
+
+    mapping(address => SessionKey) public sessionKeys;
 
     bytes4 internal constant EIP1271_MAGICVALUE = 0x1626ba7e;
-
-    mapping(address => uint256) public nonces;
-    mapping(address => SessionKey) public sessionKeys;
 
     modifier onlyEntryPoint() {
         require(msg.sender == address(ENTRY_POINT), "not entrypoint");
@@ -37,6 +38,10 @@ contract SmartAccount {
 
     receive() external payable {}
 
+    /*//////////////////////////////////////////////////////////////
+                          SESSION KEYS
+    //////////////////////////////////////////////////////////////*/
+
     function addSessionKey(
         address key,
         address target,
@@ -45,18 +50,15 @@ contract SmartAccount {
         uint48 maxUses
     ) external {
         require(msg.sender == OWNER, "only owner");
-        require(key != address(0), "invalid key");
-        require(target != address(0), "invalid target");
         require(expiry > block.timestamp, "invalid expiry");
-        require(maxUses > 0, "invalid maxUses");
 
-        sessionKeys[key] = SessionKey({
-            target: target,
-            selector: selector,
-            expiry: expiry,
-            maxUses: maxUses,
-            used: 0
-        });
+        sessionKeys[key] = SessionKey(
+            target,
+            selector,
+            expiry,
+            maxUses,
+            0
+        );
     }
 
     function revokeSessionKey(address key) external {
@@ -64,40 +66,50 @@ contract SmartAccount {
         delete sessionKeys[key];
     }
 
+    /*//////////////////////////////////////////////////////////////
+                        ERC-4337 VALIDATION
+    //////////////////////////////////////////////////////////////*/
+
     function validateUserOp(
         PackedUserOperation calldata userOp,
         bytes32 userOpHash,
         uint256 missingAccountFunds
     ) external onlyEntryPoint returns (uint256) {
-        bytes32 hash = userOpHash.toEthSignedMessageHash();
-        address signer = hash.recover(userOp.signature);
+        require(userOp.nonce == nonce, "invalid nonce");
 
-        require(userOp.nonce == nonces[signer], "invalid nonce");
+        address signer =
+            userOpHash.toEthSignedMessageHash().recover(userOp.signature);
 
         if (signer != OWNER) {
             SessionKey storage sk = sessionKeys[signer];
 
             require(sk.expiry != 0, "invalid session key");
             require(block.timestamp <= sk.expiry, "session expired");
-            require(sk.used < sk.maxUses, "session usage exceeded");
+            require(sk.used < sk.maxUses, "usage exceeded");
 
-            bytes4 selector = bytes4(userOp.callData[0:4]);
-            require(selector == sk.selector, "invalid selector");
+            (address to,, bytes memory innerData) =
+                abi.decode(userOp.callData[4:], (address, uint256, bytes));
 
-            address target = address(bytes20(userOp.callData[4:24]));
-            require(target == sk.target, "invalid target");
+            require(to == sk.target, "invalid target");
+            require(bytes4(innerData) == sk.selector, "invalid selector");
 
             sk.used++;
         }
 
-        nonces[signer]++;
+        nonce++;
 
         if (missingAccountFunds > 0) {
-            payable(msg.sender).transfer(missingAccountFunds);
+            (bool ok, ) =
+                payable(msg.sender).call{value: missingAccountFunds}("");
+            require(ok, "funds transfer failed");
         }
 
         return 0;
     }
+
+    /*//////////////////////////////////////////////////////////////
+                            EXECUTION
+    //////////////////////////////////////////////////////////////*/
 
     function execute(
         address to,
@@ -113,27 +125,31 @@ contract SmartAccount {
         uint256[] calldata values,
         bytes[] calldata data
     ) external onlyEntryPoint {
-        uint256 length = targets.length;
         require(
-            length == values.length && length == data.length,
+            targets.length == values.length &&
+            values.length == data.length,
             "length mismatch"
         );
 
-        for (uint256 i = 0; i < length; i++) {
-            (bool success, ) = targets[i].call{value: values[i]}(data[i]);
-            require(success, "batch execution failed");
+        for (uint256 i; i < targets.length; i++) {
+            (bool success, ) =
+                targets[i].call{value: values[i]}(data[i]);
+            require(success, "batch failed");
         }
     }
+
+    /*//////////////////////////////////////////////////////////////
+                           EIP-1271
+    //////////////////////////////////////////////////////////////*/
 
     function isValidSignature(
         bytes32 hash,
         bytes calldata signature
     ) external view returns (bytes4) {
-        address signer = hash.toEthSignedMessageHash().recover(signature);
+        address signer =
+            hash.toEthSignedMessageHash().recover(signature);
 
-        if (signer == OWNER) {
-            return EIP1271_MAGICVALUE;
-        }
+        if (signer == OWNER) return EIP1271_MAGICVALUE;
 
         SessionKey memory sk = sessionKeys[signer];
         if (

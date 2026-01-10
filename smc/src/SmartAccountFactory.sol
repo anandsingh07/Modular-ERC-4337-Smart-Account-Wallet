@@ -24,15 +24,13 @@ contract SmartAccountFactory {
     ) external returns (address account) {
         require(owner != address(0), "invalid owner");
 
-        
         require(
             msg.sender == owner || msg.sender == address(ENTRY_POINT),
             "unauthorized deployer"
         );
 
-        bytes32 finalSalt = keccak256(
-            abi.encode(owner, salt, block.chainid)
-        );
+        bytes32 finalSalt =
+            keccak256(abi.encode(owner, salt, block.chainid));
 
         account = getAddress(owner, salt);
 
@@ -51,9 +49,8 @@ contract SmartAccountFactory {
         address owner,
         bytes32 salt
     ) public view returns (address) {
-        bytes32 finalSalt = keccak256(
-            abi.encode(owner, salt, block.chainid)
-        );
+        bytes32 finalSalt =
+            keccak256(abi.encode(owner, salt, block.chainid));
 
         bytes memory creationCode = abi.encodePacked(
             type(SmartAccount).creationCode,
