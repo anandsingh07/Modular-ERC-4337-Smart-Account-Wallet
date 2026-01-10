@@ -1,5 +1,5 @@
 {
-  "name": "aa-4337",
+  "name": "aa-erc4337",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,16 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@alchemy/aa-accounts": "^3.19.0",
-    "@alchemy/aa-core": "^3.19.0",
     "@web3auth/base": "^9.7.0",
-    "@web3auth/modal": "^10.10.0",
-    "dotenv": "^17.2.3",
+    "@web3auth/modal": "^10.11.0",
     "ethers": "^6.16.0",
     "next": "16.1.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "viem": "^2.43.5"
+    "react-dom": "19.2.3"
   },
   "devDependencies": {
     "eslint": "^9",
